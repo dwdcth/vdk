@@ -3,12 +3,12 @@ package mp4
 import (
 	"bufio"
 	"fmt"
-	"github.com/deepch/vdk/av"
-	"github.com/deepch/vdk/codec/aacparser"
-	"github.com/deepch/vdk/codec/h264parser"
-	"github.com/deepch/vdk/codec/h265parser"
-	"github.com/deepch/vdk/format/mp4/mp4io"
-	"github.com/deepch/vdk/utils/bits/pio"
+	"github.com/dwdcth/vdk/av"
+	"github.com/dwdcth/vdk/codec/aacparser"
+	"github.com/dwdcth/vdk/codec/h264parser"
+	"github.com/dwdcth/vdk/codec/h265parser"
+	"github.com/dwdcth/vdk/format/mp4/mp4io"
+	"github.com/dwdcth/vdk/utils/bits/pio"
 	"io"
 	"time"
 )

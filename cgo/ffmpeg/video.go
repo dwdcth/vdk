@@ -1,156 +1,139 @@
 package ffmpeg
 
-/*
-#include "ffmpeg.h"
-int wrap_avcodec_decode_video2(AVCodecContext *ctx, AVFrame *frame, void *data, int size, int *got) {
-	struct AVPacket pkt = {.data = data, .size = size};
-	return avcodec_decode_video2(ctx, frame, got, &pkt);
-}
-
-int wrap_avcodec_decode_video2_empty(AVCodecContext *ctx, AVFrame *frame, void *data, int size, int *got) {
-	struct AVPacket pkt = {.data = NULL, .size = 0};
-	return avcodec_decode_video2(ctx, frame, got, &pkt);
-}
-*/
-import "C"
 import (
+	"errors"
 	"fmt"
+	"github.com/dwdcth/ffmpeg-go/v7/ffcommon"
+	"github.com/dwdcth/ffmpeg-go/v7/libavcodec"
+	"github.com/dwdcth/ffmpeg-go/v7/libavutil"
+	"github.com/dwdcth/vdk/av"
+	"github.com/dwdcth/vdk/codec/h264parser"
 	"image"
-	"reflect"
 	"runtime"
 	"unsafe"
-
-	"github.com/deepch/vdk/av"
-	"github.com/deepch/vdk/codec/h264parser"
 )
 
 type VideoDecoder struct {
 	ff        *ffctx
-	Extradata []byte
+	Extradata []ffcommon.FUint8T
+	width     int
+	height    int
 }
 
-func (self *VideoDecoder) Setup() (err error) {
-	ff := &self.ff.ff
+func (self *VideoDecoder) Setup(width, height int) (err error) {
+	ff := self.ff
 	if len(self.Extradata) > 0 {
-		ff.codecCtx.extradata = (*C.uint8_t)(unsafe.Pointer(&self.Extradata[0]))
-		ff.codecCtx.extradata_size = C.int(len(self.Extradata))
+		ff.codecCtx.Extradata = &self.Extradata[0]
+		ff.codecCtx.ExtradataSize = ffcommon.FInt(len(self.Extradata))
 	}
-	if C.avcodec_open2(ff.codecCtx, ff.codec, nil) != 0 {
-		err = fmt.Errorf("ffmpeg: decoder: avcodec_open2 failed")
+	self.width = width
+	self.height = height
+
+	if ret := ff.codecCtx.AvcodecOpen2(ff.codec, nil); ret != 0 {
+		err = fmt.Errorf("ffmpeg: decoder: avcodec_open2 failed %s", libavutil.AvErr2str(ret))
 		return
 	}
 	return
 }
 
 func fromCPtr(buf unsafe.Pointer, size int) (ret []uint8) {
-	hdr := (*reflect.SliceHeader)((unsafe.Pointer(&ret)))
-	hdr.Cap = size
-	hdr.Len = size
-	hdr.Data = uintptr(buf)
+
+	//hdr := (*reflect.SliceHeader)((unsafe.Pointer(&ret)))
+	//hdr.Cap = size
+	//hdr.Len = size
+	//hdr.Data = uintptr(buf)
+	ret = unsafe.Slice((*uint8)(buf), size)
 	return
 }
 
 type VideoFrame struct {
 	Image image.YCbCr
-	frame *C.AVFrame
+	frame *libavutil.AVFrame
 }
 
 func (self *VideoFrame) Free() {
 	self.Image = image.YCbCr{}
-	C.av_frame_free(&self.frame)
+	libavutil.AvFrameFree(&self.frame)
 }
 
+//     av_dict_set(&options,"list_devices","true",0);
+//  avformat_open_input(&pFormatCtx,"video=dummy",iformat,&options);
+
+// ret = av_opt_set(c->priv_data, "profile", "aac_low", 0);
 func freeVideoFrame(self *VideoFrame) {
 	self.Free()
 }
 
 func (self *VideoDecoder) Decode(pkt []byte) (img *VideoFrame, err error) {
-	ff := &self.ff.ff
+	ff := self.ff
+	var ret ffcommon.FInt = 0
 
-	cgotimg := C.int(0)
-	frame := C.av_frame_alloc()
-	cerr := C.wrap_avcodec_decode_video2(ff.codecCtx, frame, unsafe.Pointer(&pkt[0]), C.int(len(pkt)), &cgotimg)
-	if cerr < C.int(0) {
-		err = fmt.Errorf("ffmpeg: avcodec_decode_video2 failed: %d", cerr)
+	frame := libavutil.AvFrameAlloc()
+
+	var avPkt *libavcodec.AVPacket
+	if pkt != nil {
+		avPkt.Size = ffcommon.FUint(len(pkt))
+		//avPkt.AvNewPacket(ffcommon.FInt(self.width * self.height))
+		avPkt.Data = (*ffcommon.FUint8T)(&pkt[0]) //分配一个packet
+	} else {
+		avPkt = nil
+	}
+
+	ret = ff.codecCtx.AvcodecSendPacket(avPkt)
+	if ret != 0 {
+		err = fmt.Errorf("avcodec_send_packet failed %d", ret)
+		return
+	}
+	ret = ff.codecCtx.AvcodecReceiveFrame(frame)
+	if ret != 0 {
+		err = fmt.Errorf("avcodec_receive_frame failed %d", ret)
 		return
 	}
 
-	if cgotimg != C.int(0) {
-		w := int(frame.width)
-		h := int(frame.height)
-		ys := int(frame.linesize[0])
-		cs := int(frame.linesize[1])
+	w := int(frame.Width)
+	h := int(frame.Height)
+	ys := int(frame.Linesize[0])
+	cs := int(frame.Linesize[1])
 
-		img = &VideoFrame{Image: image.YCbCr{
-			Y:              fromCPtr(unsafe.Pointer(frame.data[0]), ys*h),
-			Cb:             fromCPtr(unsafe.Pointer(frame.data[1]), cs*h/2),
-			Cr:             fromCPtr(unsafe.Pointer(frame.data[2]), cs*h/2),
-			YStride:        ys,
-			CStride:        cs,
-			SubsampleRatio: image.YCbCrSubsampleRatio420,
-			Rect:           image.Rect(0, 0, w, h),
-		}, frame: frame}
-		runtime.SetFinalizer(img, freeVideoFrame)
-	}
+	img = &VideoFrame{Image: image.YCbCr{
+		Y:              fromCPtr(unsafe.Pointer(frame.Data[0]), ys*h),
+		Cb:             fromCPtr(unsafe.Pointer(frame.Data[1]), cs*h/2),
+		Cr:             fromCPtr(unsafe.Pointer(frame.Data[2]), cs*h/2),
+		YStride:        ys,
+		CStride:        cs,
+		SubsampleRatio: image.YCbCrSubsampleRatio420,
+		Rect:           image.Rect(0, 0, w, h),
+	}, frame: frame}
+	runtime.SetFinalizer(img, freeVideoFrame)
 
 	return
 }
 
 func (self *VideoDecoder) DecodeSingle(pkt []byte) (img *VideoFrame, err error) {
-	ff := &self.ff.ff
-	cgotimg := C.int(0)
-	frame := C.av_frame_alloc()
-	cerr := C.wrap_avcodec_decode_video2(ff.codecCtx, frame, unsafe.Pointer(&pkt[0]), C.int(len(pkt)), &cgotimg)
-	if cerr < C.int(0) {
-		err = fmt.Errorf("ffmpeg: avcodec_decode_video2 failed: %d", cerr)
-		return
-	}
-	//https://stackoverflow.com/questions/25431413/decode-compressed-frame-to-memory-using-libav-avcodec-decode-video2
-	if cgotimg == C.int(0) {
-		cerr = C.wrap_avcodec_decode_video2_empty(ff.codecCtx, frame, unsafe.Pointer(&pkt[0]), C.int(0), &cgotimg)
-		if cerr < C.int(0) {
-			err = fmt.Errorf("ffmpeg: avcodec_decode_video2 failed: %d", cerr)
-			return
-		}
-	}
-	if cgotimg != C.int(0) {
-		w := int(frame.width)
-		h := int(frame.height)
-		ys := int(frame.linesize[0])
-		cs := int(frame.linesize[1])
-
-		img = &VideoFrame{Image: image.YCbCr{
-			Y:              fromCPtr(unsafe.Pointer(frame.data[0]), ys*h),
-			Cb:             fromCPtr(unsafe.Pointer(frame.data[1]), cs*h/2),
-			Cr:             fromCPtr(unsafe.Pointer(frame.data[2]), cs*h/2),
-			YStride:        ys,
-			CStride:        cs,
-			SubsampleRatio: image.YCbCrSubsampleRatio420,
-			Rect:           image.Rect(0, 0, w, h),
-		}, frame: frame}
-		runtime.SetFinalizer(img, freeVideoFrame)
-	}
-
-	return
+	return self.Decode(nil)
 }
 
 func NewVideoDecoder(stream av.CodecData) (dec *VideoDecoder, err error) {
 	_dec := &VideoDecoder{}
+	video, ok := stream.(av.VideoCodecData)
+	if !ok {
+		return nil, errors.New("NewVideoDecoder failed: not a video codec data")
+	}
 	var id uint32
 
-	switch stream.Type() {
+	switch video.Type() {
 	case av.H264:
 		h264 := stream.(h264parser.CodecData)
 		_dec.Extradata = h264.AVCDecoderConfRecordBytes()
-		id = C.AV_CODEC_ID_H264
+		id = libavcodec.AV_CODEC_ID_H264
 
 	default:
 		err = fmt.Errorf("ffmpeg: NewVideoDecoder codec=%v unsupported", stream.Type())
 		return
 	}
 
-	c := C.avcodec_find_decoder(id)
-	if c == nil || C.avcodec_get_type(id) != C.AVMEDIA_TYPE_VIDEO {
+	c := libavcodec.AvcodecFindDecoder(libavcodec.AVCodecID(id))
+	if c == nil || c.Type != libavutil.AVMEDIA_TYPE_VIDEO {
 		err = fmt.Errorf("ffmpeg: cannot find video decoder codecId=%d", id)
 		return
 	}
@@ -158,7 +141,7 @@ func NewVideoDecoder(stream av.CodecData) (dec *VideoDecoder, err error) {
 	if _dec.ff, err = newFFCtxByCodec(c); err != nil {
 		return
 	}
-	if err = _dec.Setup(); err != nil {
+	if err = _dec.Setup(video.Width(), video.Height()); err != nil {
 		return
 	}
 

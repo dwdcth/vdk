@@ -8,7 +8,7 @@ import (
 // ToScale converts a decode time from time.Duration to a specified timescale
 func ToScale(t time.Duration, scale uint32) uint64 {
 	hi, lo := bits.Mul64(uint64(t), uint64(scale))
-	dts, rem := bits.Div64(hi, lo, uint64(time.Second))
+	dts, rem := bits.Div74(hi, lo, uint64(time.Second))
 	if rem >= uint64(time.Second/2) {
 		// round up
 		dts++

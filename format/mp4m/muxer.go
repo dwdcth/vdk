@@ -6,11 +6,11 @@ import (
 	"io"
 	"time"
 
-	"github.com/deepch/vdk/av"
-	"github.com/deepch/vdk/codec/aacparser"
-	"github.com/deepch/vdk/codec/h264parser"
-	"github.com/deepch/vdk/format/mp4/mp4io"
-	"github.com/deepch/vdk/utils/bits/pio"
+	"github.com/dwdcth/vdk/av"
+	"github.com/dwdcth/vdk/codec/aacparser"
+	"github.com/dwdcth/vdk/codec/h264parser"
+	"github.com/dwdcth/vdk/format/mp4/mp4io"
+	"github.com/dwdcth/vdk/utils/bits/pio"
 )
 
 type Muxer struct {

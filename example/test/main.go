@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/deepch/vdk/format/ts"
+	"github.com/dwdcth/vdk/format/ts"
 	"log"
 	"os"
 )
